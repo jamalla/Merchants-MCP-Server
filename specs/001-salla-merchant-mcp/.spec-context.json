@@ -1,0 +1,10 @@
+{
+  "workflow": "speckit",
+  "specName": "001-salla-merchant-mcp",
+  "branch": "001-salla-merchant-mcp",
+  "selectedAt": "2026-04-29T06:15:14.779Z",
+  "currentStep": "specify",
+  "status": "draft",
+  "stepHistory": {},
+  "transitions": []
+}
