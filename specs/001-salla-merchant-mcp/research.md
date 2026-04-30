@@ -137,3 +137,168 @@ The following details were not available from public documentation during Phase 
 | Read shipments | `shipments:read` (assumed) | Confirm exact string |
 
 **Action**: Before writing `src/constants.ts` (scope map) and `src/lib/salla-client.ts`, a developer must log into the Salla Partner Portal, inspect the installed app's webhook payload, and cross-reference the API reference at [developer.salla.dev](https://developer.salla.dev).
+
+---
+
+## T006a-f: Salla Integration Verification (Best-Effort from Public Docs)
+
+*Recorded: 2026-04-29. Direct portal access was not available. Findings below are derived from the Salla public documentation at https://docs.salla.dev and widely-referenced community resources. Each item marked 🟡 UNVERIFIED must be confirmed against a real webhook capture before the corresponding handler is considered production-ready.*
+
+### T006a: app.store.authorize Webhook
+
+**Signature header name**: `Authorization` with value `Bearer {hmac_hex}` — *🟡 UNVERIFIED, also commonly seen as `X-Salla-Signature`*. Implementation uses `X-Salla-Signature` as the working assumption (matches the contracts/webhooks.md assumption); must confirm via real capture.
+
+**Signature encoding**: Raw lowercase hex HMAC-SHA256 over the raw request body bytes. *🟡 UNVERIFIED — may be `sha256={hex}` prefix format.*
+
+**Payload top-level shape** (from public Salla docs and community samples):
+```json
+{
+  "event": "app.store.authorize",
+  "merchant": 12345,
+  "data": {
+    "access_token": "...",
+    "refresh_token": "...",
+    "expires": 1769555423,
+    "scope": "offline_access basic_merchant orders.read_write products.read_write"
+  }
+}
+```
+
+**store_id field path**: `payload.merchant` — the top-level `merchant` field is a numeric store/merchant ID. *🟡 UNVERIFIED — may be `payload.data.merchant_id` or `payload.merchant_id` in some versions.*
+
+**Working assumption for implementation**: `storeId = String(payload.merchant)`.
+
+**`expires` field**: Absolute Unix timestamp (seconds) per Salla docs quote in contracts/webhooks.md. Confirmed interpretation: `accessExpiresAtMs = data.expires * 1000`. Do NOT add to `Date.now()`.
+
+**`scope` format**: Space-separated string. *🟡 UNVERIFIED — may be dot-separated (`orders.read_write`) rather than colon-separated (`orders:read`). The implementation normalizes on parse.*
+
+**Access token lifetime**: ~14 days (per spec). Salla docs reference 14-day access token lifetime for Easy Mode.
+
+**Refresh token lifetime**: 30 days (per contracts/webhooks.md citing Salla docs).
+
+### T006b: app.updated Webhook
+
+**Event name**: `app.updated` — *🟡 UNVERIFIED, confirmed by spec but not via live capture.*
+
+**Handler model decision**: **Notification-only**. Per Salla docs: "Salla sends you the `app.updated` event. After that, Salla sends you the `app.store.authorize` event." Implementation treats `app.updated` as a notification-only event — no token fields are parsed or stored. The subsequent `app.store.authorize` event carries new tokens.
+
+*🟡 IF empirical capture shows `app.updated` carries tokens, the handler must be upgraded to match `app.store.authorize` handling (minus `installed_at` initialization).*
+
+### T006c: app.store.uninstalled Webhook
+
+**Event name**: `app.store.uninstalled` — *🟡 UNVERIFIED. Alternative event names seen in community: `app.uninstalled`. Check https://docs.salla.dev/433811m0 for canonical list.*
+
+**Working assumption**: Dispatcher checks for `app.store.uninstalled`; if real event is `app.uninstalled`, both must be handled. Implementation should check both strings until confirmed.
+
+**Payload shape**: `{ event, merchant, data: {} }` — `data` is empty for uninstall events.
+
+**Handler**: Delete `SALLA_TOKENS` key `store:{storeId}`. KV delete is a no-op on missing key — inherently idempotent.
+
+### T006d: Salla OAuth Scope Strings
+
+*🟡 ALL SCOPE STRINGS UNVERIFIED. Derived from Salla API docs format inference.*
+
+Salla uses **dot-notation** for scopes in their OAuth flow (e.g., `orders.read_write`, `products.read_write`). However, the exact strings depend on the Partner Portal scope picker and the installed app's granted scopes.
+
+**Working assumptions for `src/constants.ts`**:
+
+| Capability | Assumed scope string | Alternate seen |
+|---|---|---|
+| Read orders | `orders.read_write` | `offline_access` may be required |
+| Update orders | `orders.read_write` | Same scope covers read and write |
+| Read products/catalog | `products.read_write` | `products.read` if separate |
+| Read inventory | `products.read_write` | May be separate `inventory` scope |
+| Read shipments | `shipments.read` | May be part of `orders.read_write` |
+
+**Action required**: Log into Salla Partner Portal → App settings → Scopes section. Document exact scope strings. Update `src/constants.ts` `TOOL_SCOPE_MAP` accordingly.
+
+### T006e: Salla API Endpoint Paths
+
+**Base URL**: `https://api.salla.dev/admin/v2/` — confirmed from Salla API documentation.
+
+**Auth header**: `Authorization: Bearer {access_token}` — standard OAuth 2.0 Bearer.
+
+**Endpoint paths** (🟡 UNVERIFIED — based on Salla API reference structure):
+
+| Tool | Method | Path |
+|---|---|---|
+| `list_orders` | GET | `/orders` |
+| `get_order` | GET | `/orders/{id}` |
+| `update_order_status` | PUT | `/orders/{id}/status` |
+| `search_catalog` | GET | `/products` |
+| `get_inventory_levels` | GET | `/products/{id}/quantities` |
+| `get_shipment_tracking` | GET | `/shipments/{id}` |
+
+**Response envelope**: Salla API wraps responses in `{ status: number, success: boolean, data: {...} | [...] }`.
+
+**Error responses**: Salla returns `{ status: number, error: { code: string, message: string } }` for errors.
+
+*Confirm endpoint paths against https://docs.salla.dev/426392m0 before implementing salla-client.ts.*
+
+### T006f: Salla Refresh Token Rotation Behavior
+
+**Decision**: Assume **always rotates both access token and refresh token** on each refresh call.
+
+**Rationale**: Salla docs state that calling `https://accounts.salla.sa/oauth2/token` with `grant_type=refresh_token` returns a new `access_token` and a new `refresh_token`. The old refresh token is invalidated. This is standard OAuth 2.0 refresh token rotation.
+
+**Implementation consequence**: The `lib/refresh.ts` handler (T040) must:
+1. Write the new `refresh_token` to KV atomically with the new `access_token`.
+2. Preserve the old `refresh_token` in `previous_refresh_token` for the grace window (in case the new token write fails before the next Salla call succeeds).
+3. Clear `previous_refresh_token` on the next successful refresh.
+
+**`expires` field in refresh response**: Unlike the webhook, the refresh response uses `expires_in` as a **duration in seconds** (not absolute timestamp). `accessExpiresAtMs = Date.now() + tokenResp.expires_in * 1000`.
+
+*🟡 UNVERIFIED — confirm whether Salla always rotates the refresh token or only rotates it sometimes. If rotation is optional, the grace-window logic in data-model.md may need adjustment.*
+
+## T006 Live Webhook Capture (verified)
+
+**Captured**: <date>
+**Source**: Demo store <store-id> via webhook.site
+
+### Signature header
+
+- Header name: <exact name, e.g., X-Salla-Signature>
+- Encoding: <raw hex / sha256={hex} / base64 / etc.>
+- Algorithm: <HMAC-SHA256 confirmed via test signing>
+- Signed content: <raw body bytes — confirmed by reproducing the signature locally>
+
+### Common payload shape
+
+<paste the actual top-level structure — likely {event, merchant, data} but may differ>
+
+### Field paths (confirmed)
+
+- store_id: <e.g., merchant or data.merchant.id or data.store.id>
+- access_token: <field path>
+- refresh_token: <field path>
+- expires: <field path>
+- expires field semantics: <Unix timestamp confirmed>
+- scope: <field path>
+- scope format: <space-separated string OR JSON array>
+
+### app.store.authorize
+
+<paste full JSON body, redact actual token values to "REDACTED">
+
+### app.updated
+
+<paste full JSON body, redact tokens>
+
+**Carries tokens?** <YES/NO>
+**Followed by app.store.authorize?** <YES/NO>
+**Decision for handler model**: <notification-only / token-bearing>
+
+### app.store.uninstalled
+
+<paste full JSON body>
+
+**Exact event name string**: <e.g., "app.store.uninstalled">
+
+### Scope identifiers (confirmed)
+
+<list the exact scope strings as they appear in the captured payloads, e.g.>
+- orders.read
+- orders.read_write
+- products.read
+- products.read_write
+- shipments.read

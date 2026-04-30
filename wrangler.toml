@@ -1,0 +1,50 @@
+name = "salla-merchant-mcp-server"
+main = "src/index.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+[[kv_namespaces]]
+binding = "SALLA_TOKENS"
+id = "REPLACE_WITH_SALLA_TOKENS_KV_ID"
+preview_id = "REPLACE_WITH_SALLA_TOKENS_KV_PREVIEW_ID"
+
+[[kv_namespaces]]
+binding = "JWT_DENYLIST"
+id = "REPLACE_WITH_JWT_DENYLIST_KV_ID"
+preview_id = "REPLACE_WITH_JWT_DENYLIST_KV_PREVIEW_ID"
+
+[[unsafe.bindings]]
+name = "RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 60, period = 60 }
+
+[vars]
+ACTIVE_KEY_VERSION = "1"
+MCP_ISSUER = "https://mcp.salla.dev"
+MCP_AUDIENCE = "salla-merchant-mcp"
+REFRESH_WINDOW_SECONDS = "3600"
+MAX_INSTALL_URL_LIFETIME_SECONDS = "7776000"
+
+[env.staging]
+name = "salla-merchant-mcp-server-staging"
+
+[env.staging.vars]
+ACTIVE_KEY_VERSION = "1"
+MCP_ISSUER = "https://mcp-staging.salla.dev"
+MCP_AUDIENCE = "salla-merchant-mcp"
+REFRESH_WINDOW_SECONDS = "3600"
+MAX_INSTALL_URL_LIFETIME_SECONDS = "7776000"
+
+[env.production]
+name = "salla-merchant-mcp-server-production"
+
+[env.production.vars]
+ACTIVE_KEY_VERSION = "1"
+MCP_ISSUER = "https://mcp.salla.dev"
+MCP_AUDIENCE = "salla-merchant-mcp"
+REFRESH_WINDOW_SECONDS = "3600"
+MAX_INSTALL_URL_LIFETIME_SECONDS = "7776000"

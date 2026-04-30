@@ -1,0 +1,25 @@
+# .dev.vars — local development secrets (copy to .dev.vars, never commit)
+# Generate TOKEN_ENC_KEY_V1: openssl rand -base64 32
+# Generate ENCRYPTION_SALT: openssl rand -base64 16
+
+# AES-256-GCM encryption key for merchant tokens at rest (base64-encoded 32 bytes)
+TOKEN_ENC_KEY_V1=
+
+# Salt for HKDF key derivation (base64-encoded 16 bytes)
+ENCRYPTION_SALT=
+
+# Which key version is active for new encryptions (integer string, e.g. "1")
+ACTIVE_KEY_VERSION=1
+
+# HS256 signing secret for install URL JWTs (arbitrary string, keep secret)
+JWT_SIGNING_SECRET=local-dev-jwt-secret
+
+# HMAC-SHA256 secret for Salla webhook signature verification
+SALLA_WEBHOOK_SECRET_V1=local-dev-webhook-secret
+
+# HMAC-SHA256 secret for internal Dashboard → MCP API authentication
+INTERNAL_API_SECRET_V1=local-dev-internal-secret
+
+# Salla app credentials (from Salla Partner Portal)
+SALLA_CLIENT_ID=
+SALLA_CLIENT_SECRET=
